@@ -295,6 +295,12 @@ ProjectItem.-done {
         # Built through `smartsheet_client`, which applies the credential
         # config.toml names — a bare `SmartsheetClient()` cannot see it, and a
         # handed-in one is used as-is by `build_backend`.
+        #
+        # A host embedding this panel should hand over **nothing**: which
+        # credential to read comes from Projection's own config, which a host has
+        # no reason to know about. Passing a bare client is how the embed ended up
+        # unable to find a token that the standalone app found fine.
+        self._owns_client = client is None
         self._client = client or smartsheet_client(self._config)
         # None when nothing is configured: the local store is the source of
         # record, so local-only is a supported way to run, not a failure.
@@ -1362,12 +1368,16 @@ ProjectItem.-done {
             loading.dismiss()
 
     async def on_unmount(self) -> None:
-        """Stop polling when the panel goes away.
+        """Stop polling when the panel goes away, and close what it owns.
 
-        The client is closed by whoever created it -- the app for standalone
-        use, the host otherwise -- since it may outlive this panel.
+        A client the panel was *handed* belongs to whoever made it — the app, for
+        standalone use — and may outlive this panel, so it is left alone. One the
+        panel built itself has no other owner, and an embedded panel is opened and
+        closed repeatedly, so leaving those open leaks a session per visit.
         """
         self._sync.stop_polling()
+        if self._owns_client:
+            await self._client.aclose()
 
 
 def _hook_message(output: str, fallback: str) -> str:

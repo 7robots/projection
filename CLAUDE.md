@@ -456,6 +456,20 @@ keeps a token in. Two consequences:
   `examples/exec_summary/` names its own, since a hook is never handed
   Projection's.
 
+### Embedding the panel
+
+`ProjectsPanel` is a plain widget, so another Textual app can mount it. One rule
+for a host: **hand over nothing but a config, if that.** Which credential to read
+comes from Projection's config (`token_ref`), which a host has no reason to know
+about — and a client the panel is *given* is used as-is by `build_backend`, so a
+helpfully-constructed bare `SmartsheetClient()` produces a panel that cannot find
+a token however correct config.toml is. That is exactly how librarian's embed
+broke while the standalone app worked.
+
+The panel closes a client it built itself (`_owns_client`), because an embedded
+panel is opened and closed repeatedly and nobody else owns that session. A client
+it was handed belongs to whoever made it and is left alone.
+
 ### Setup: choosing, creating, and adopting a backend
 
 `,` (or the "Projects backend" palette entry) opens `SetupModal`. It is also

@@ -850,3 +850,73 @@ async def test_a_typed_reference_is_saved(monkeypatch, config_file):
     written = Config.load(config_file)
     assert written.smartsheet.token_ref == "op://Private/sheets/token"
     assert written.smartsheet.projects_sheet_id == 42
+
+
+# ==================== A host must not have to build the client ================
+
+
+async def test_a_panel_given_no_client_builds_a_credentialed_one(tmp_path):
+    """What an embedding host should do: hand over nothing.
+
+    Which credential to read comes from Projection's config, which a host has no
+    reason to know about — so a host that helpfully constructs a bare
+    `SmartsheetClient()` produces a panel that cannot find any token, however
+    correct config.toml is. That is what broke librarian's embed while the
+    standalone app worked.
+    """
+    path = tmp_path / "config.toml"
+    path.write_text(
+        'backend = "smartsheet"\n[backends.smartsheet]\n'
+        'sheet_id = 1\ntoken_ref = "op://Private/sheets/token"\n'
+    )
+    panel = panel_module.ProjectsPanel(config=Config.load(path))
+
+    assert panel._client._credential.secret_ref == "op://Private/sheets/token"
+    assert panel._owns_client is True
+
+
+async def test_a_handed_in_client_is_used_and_not_owned(tmp_path):
+    """The standalone app builds one and closes it itself."""
+    client = FakeClient()
+    panel = panel_module.ProjectsPanel(client=client, config=Config())
+    assert panel._client is client
+    assert panel._owns_client is False
+
+
+async def test_the_panel_closes_a_client_it_built(monkeypatch, config_file):
+    """An embedded panel is opened and closed repeatedly, so each visit would
+    otherwise leak an HTTP session.
+
+    Hosted the way librarian hosts it — a plain widget mounted with no client —
+    rather than through `ProjectsApp`, which builds its own and closes it itself.
+    """
+    from textual.app import App, ComposeResult
+
+    monkeypatch.setattr(panel_module, "SyncCoordinator", FakeSync)
+    closed: list[bool] = []
+
+    class Tracking(FakeClient):
+        async def aclose(self):
+            closed.append(True)
+
+    monkeypatch.setattr(panel_module, "smartsheet_client", lambda config: Tracking())
+    config = _config(
+        config_file,
+        backend="smartsheet",
+        smartsheet=SmartsheetConfig(projects_sheet_id=1),
+    )
+
+    class Host(App):
+        def compose(self) -> ComposeResult:
+            # No client: exactly what a host should hand over.
+            yield panel_module.ProjectsPanel(config=config, id="projects-panel")
+
+    host = Host()
+    async with host.run_test(size=(120, 40)) as pilot:
+        await _settle(pilot)
+        panel = host.query_one("#projects-panel", panel_module.ProjectsPanel)
+        assert panel._owns_client is True
+        await panel.remove()
+        await _settle(pilot)
+
+    assert closed, "the panel should close the client it built"
