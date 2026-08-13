@@ -827,3 +827,50 @@ def test_the_configured_ref_reaches_the_backends_client(tmp_path):
         )
     )
     assert d1._client._credential.secret_ref == "op://Private/cf/token"
+
+
+def test_saving_writes_through_a_symlink_rather_than_over_it(tmp_path):
+    """A config symlinked out of a dotfiles repo must keep syncing after a save.
+
+    The write is `os.replace`, which replaces the link itself unless the path is
+    resolved first — so the repo copy would go stale and every other machine
+    would keep reading it, with nothing to suggest why.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    tracked = repo / "config.toml"
+    tracked.write_text('backend = ""\n')
+
+    home = tmp_path / "home"
+    home.mkdir()
+    link = home / "config.toml"
+    link.symlink_to(tracked)
+
+    config = Config.load(link)
+    dataclasses.replace(
+        config,
+        backend="smartsheet",
+        smartsheet=SmartsheetConfig(projects_sheet_id=42),
+    ).save(link)
+
+    assert link.is_symlink(), "the symlink was replaced by a regular file"
+    assert "42" in tracked.read_text(), "the repo copy did not receive the change"
+    assert Config.load(link).smartsheet.projects_sheet_id == 42
+
+
+def test_the_backup_lands_beside_the_real_file(tmp_path):
+    """Not beside the link: the .bak belongs with what it backs up."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    tracked = repo / "config.toml"
+    tracked.write_text('backend = "smartsheet"\n')
+
+    home = tmp_path / "home"
+    home.mkdir()
+    link = home / "config.toml"
+    link.symlink_to(tracked)
+
+    Config.load(link).save(link)
+
+    assert (repo / "config.toml.bak").exists()
+    assert not (home / "config.toml.bak").exists()

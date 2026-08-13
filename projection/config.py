@@ -347,6 +347,14 @@ class Config:
         defaults", and for `backend` that means silently going local-only.
         """
         file_path = path or self.source or DEFAULT_CONFIG_FILE
+        # Write through a symlink, not over it. The atomic write below is
+        # `os.replace`, which swaps the *link* for the temp file — so a config
+        # symlinked out of a dotfiles repo silently stops syncing the first time
+        # anything saves, and the repo keeps serving a stale copy on every other
+        # machine. Resolving first means the link survives and the real file is
+        # what changes.
+        if file_path.is_symlink():
+            file_path = file_path.resolve()
         file_path.parent.mkdir(parents=True, exist_ok=True)
         if file_path.exists():
             shutil.copy2(file_path, file_path.with_name(file_path.name + ".bak"))
