@@ -1,0 +1,26 @@
+# Configuration for the exec-summary hook.
+#
+# Copy to ~/.config/projection/exec-summary.toml (or drop a config.toml next to
+# the script, which takes precedence) and fill in your own target.
+#
+# This is the *script's* config, deliberately separate from Projection's own:
+# which sheet receives a roll-up, and which row in it, is your business rather
+# than the tool's.
+
+# The sheet and row the approved summary is written to. All three are verified
+# before anything is sent -- the sheet by name, the row by its Category value --
+# so a mistyped id fails loudly instead of writing into someone else's row.
+summary_sheet_id = 0
+summary_sheet_name = "Leadership Roll-up"
+summary_row_id = 0
+summary_row_category = "YourTeam"
+
+# Headless `claude -p` drafts the text. It is given no tools; see headless.py.
+claude_bin = "claude"
+summary_model = "sonnet"
+timeout_seconds = 180
+
+# Where this script reads its own Smartsheet token. A hook is never handed
+# Projection's credential, and Projection itself carries no default reference —
+# so name yours here, or export SMARTSHEET_API_KEY as a break-glass path.
+token_ref = "op://Vault/item/field"

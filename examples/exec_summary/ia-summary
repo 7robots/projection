@@ -1,0 +1,192 @@
+#!/usr/bin/env python3
+"""The Infrastructure Architecture team's executive-summary hook.
+
+This used to be built into Projection as the `x` key. It is here instead, as one
+instance of the `[[hooks]]` facility, because everything specific about it is
+specific to *one team*: which sheet receives the summary, which row, that the row
+is identified by the value `IA`, and that a checkbox called `Status Updated?` gets
+ticked. None of that belongs in a tool other people install.
+
+Projection invokes this twice:
+
+    ia-summary --phase=draft     # JSON on stdin -> draft text on stdout
+    ia-summary --phase=commit    # JSON on stdin (incl. the approved text) -> push
+
+Between them, Projection shows the draft for editing and approval. Cancelling
+means `--phase=commit` never runs, which is why the irreversible write lives in
+that phase and nowhere else.
+
+Configuration: `~/.config/projection/exec-summary.toml` (see
+`config.example.toml`). Deliberately a separate file from Projection's own — this
+is the script's config, and the script is yours.
+
+**The projects on stdin are untrusted.** Titles and update text come from a
+sheet other people write to, and `build_prompt` puts them *after* the
+instructions, the most injection-favourable position. Anyone who can edit a row
+can therefore address the drafting model. The review step does not mitigate that:
+it gates the Smartsheet write, but any tool call would already have happened
+before a character reached the screen. Containment is at the process boundary in
+`headless.py` — read the table in its docstring before changing how this runs.
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import os
+import sys
+import tomllib
+from pathlib import Path
+
+# The sibling modules ship next to this script, so it works from any directory.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import headless  # noqa: E402
+from summary_store import SummaryStore  # noqa: E402
+
+def _config_path() -> Path:
+    """A config.toml beside the script wins; otherwise the XDG location.
+
+    Same resolution Projection itself uses, so the two configs live together.
+    """
+    beside = Path(__file__).resolve().parent / "config.toml"
+    if beside.exists():
+        return beside
+    base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+    return base / "projection" / "exec-summary.toml"
+
+DEFAULTS = {
+    "summary_sheet_id": 0,
+    "summary_sheet_name": "",
+    "summary_row_id": 0,
+    "summary_row_category": "",
+    "claude_bin": "claude",
+    "summary_model": "sonnet",
+    "timeout_seconds": 180.0,
+    # The script's own credential. A hook is never handed Projection's, so it
+    # names its own reference — the same one, in practice, but the hook has to
+    # say so rather than inherit it.
+    "token_ref": "",
+}
+
+
+class ConfigError(Exception):
+    """The hook is not configured."""
+
+
+def load_config() -> dict:
+    config_file = _config_path()
+    if not config_file.exists():
+        raise ConfigError(
+            f"{config_file} does not exist. Copy config.example.toml to it and "
+            "fill in the sheet you push to."
+        )
+    with open(config_file, "rb") as f:
+        loaded = tomllib.load(f)
+    settings = {**DEFAULTS, **loaded}
+    for required in ("summary_sheet_id", "summary_row_id", "summary_row_category"):
+        if not settings.get(required):
+            raise ConfigError(f"{config_file} is missing {required}")
+    return settings
+
+
+def build_prompt(projects: list[dict]) -> str:
+    """The drafting prompt.
+
+    Untrusted text goes in last, as JSON. See the module docstring.
+    """
+    payload = [
+        {
+            "title": p.get("title", ""),
+            "status": p.get("status") or "",
+            "assigned": ", ".join(
+                a.get("name", "") for a in (p.get("assigned") or [])
+            ),
+            "due_date": p.get("due_date") or "",
+            "update": p.get("note") or "",
+        }
+        for p in projects
+    ]
+    return (
+        "You are writing the Infrastructure Architecture (IA) team's status "
+        "update for a leadership roll-up (the IA row of a 'Service Area "
+        "Updates' sheet).\n\n"
+        "Sort every project into one of exactly two sections: put AI/ML, "
+        "agent, LLM, MCP, and assistant work under 'AI'; put cloud, network, "
+        "security, IAM, virtualization, and platform work under "
+        "'Infrastructure and Security'. Write one line per project, leading "
+        "with the project name, then a colon, then a short status-oriented "
+        "summary of its update. Keep it concise and factual; do not invent "
+        "details beyond the provided data. Include both section headers even "
+        "if a section has only one project.\n\n"
+        "Output ONLY the summary in EXACTLY this format — no preamble, no "
+        "code fences, no bullet characters:\n\n"
+        "Infrastructure and Security:\n\n"
+        "<Project name>: <update>\n"
+        "<Project name>: <update>\n\n"
+        "AI:\n\n"
+        "<Project name>: <update>\n"
+        "<Project name>: <update>\n\n"
+        f"Projects (JSON):\n{json.dumps(payload, indent=2)}"
+    )
+
+
+async def draft(settings: dict, projects: list[dict]) -> str:
+    if not projects:
+        raise SystemExit("nothing starred to summarise")
+    return await headless.run_claude(
+        build_prompt(projects),
+        claude_bin=settings["claude_bin"],
+        timeout=float(settings["timeout_seconds"]),
+        model=settings["summary_model"],
+    )
+
+
+async def commit(settings: dict, text: str) -> str:
+    if not text.strip():
+        raise SystemExit("refusing to push an empty summary")
+    store = SummaryStore(
+        token_ref=str(settings["token_ref"]),
+        sheet_id=int(settings["summary_sheet_id"]),
+        row_id=int(settings["summary_row_id"]),
+        category=settings["summary_row_category"],
+        sheet_name=settings["summary_sheet_name"],
+    )
+    try:
+        row_id = await store.push(text)
+    finally:
+        await store.aclose()
+    return f"written to row {row_id} (Status Updated? ticked)"
+
+
+async def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--phase", default="draft", choices=("draft", "commit"))
+    args = parser.parse_args()
+
+    try:
+        message = json.load(sys.stdin)
+    except json.JSONDecodeError as e:
+        print(f"could not read the payload on stdin: {e}", file=sys.stderr)
+        return 1
+
+    try:
+        settings = load_config()
+        if args.phase == "draft":
+            out = await draft(settings, message.get("projects") or [])
+        else:
+            out = await commit(settings, message.get("text") or "")
+    except ConfigError as e:
+        print(str(e), file=sys.stderr)
+        return 2
+    except Exception as e:  # surfaced by Projection as the hook's failure
+        print(f"{type(e).__name__}: {e}", file=sys.stderr)
+        return 1
+
+    print(out.strip())
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(asyncio.run(main()))

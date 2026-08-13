@@ -1,0 +1,14 @@
+# Local settings (may contain sensitive data)
+.claude/settings.local.json
+
+# OS files
+.DS_Store
+
+# Python
+*.pyc
+__pycache__/
+
+# Note: .claude/ directory IS committed to git (except settings.local.json)
+# This ensures agent and skill configuration syncs across computers
+.craft_tokens.json
+.env
