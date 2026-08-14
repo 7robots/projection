@@ -220,9 +220,18 @@ row above afterwards.
 - **Turning a backend off and back on** — local-only, add a project, reconnect;
   the new project should be pushed and matched, not duplicated.
 
-- **The `x` hook end to end** — the phase-3 deliverable, and the longest chain in
-  the system: librarian → projection → `ia-summary` → `claude` → review dialog →
-  write to the IA row. Cancelling the review exercises everything but the write.
+- ~~**The `x` hook end to end**~~ — **run 2026-08-14, and it was broken.** The
+  script died on its first import: a hook is a subprocess with a scratch working
+  directory, so `#!/usr/bin/env python3` got a system interpreter with neither
+  `projection` nor httpx. Run from the repository root it worked by accident,
+  because the package is a subdirectory there — which is why every check before
+  this one passed. It now hands off to the project's own interpreter.
+
+  Verified afterwards through the panel: 12 starred projects → the hook →
+  `claude -p` → a two-section draft in the review dialog → cancel, *"nothing
+  committed"*. **The commit phase — the actual write to the roll-up row — is still
+  the one step never run**, and it is the irreversible one, so it stays on this
+  list until someone runs it against a scratch row.
 - **Delete** — the one CRUD path never run live, and the one with tombstones
   behind it.
 - **Conflict resolution** — hard to stage deliberately on Smartsheet; needs someone
