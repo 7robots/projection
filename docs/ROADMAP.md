@@ -227,18 +227,21 @@ row above afterwards.
   because the package is a subdirectory there — which is why every check before
   this one passed. It now hands off to the project's own interpreter.
 
-  Verified afterwards through the panel: 12 starred projects → the hook →
-  `claude -p` → a two-section draft in the review dialog → cancel, *"nothing
-  committed"*. **The commit phase — the actual write to the roll-up row — is still
-  the one step never run**, and it is the irreversible one, so it stays on this
-  list until someone runs it against a scratch row.
-- **Delete** — the one CRUD path never run live, and the one with tombstones
-  behind it.
-- **Conflict resolution** — hard to stage deliberately on Smartsheet; needs someone
-  else editing the same field of the same row between two syncs. **Now
-  reproducible against D1**: point two stores at one database, edit the same field
-  in both, and sync. `test_d1_integration.py` already covers two stores sharing one
-  project identity, so the setup is a few lines.
+  Verified through the panel first — 12 starred projects → the hook → `claude -p`
+  → a two-section draft in the review dialog → cancel, *"nothing committed"* — and
+  then **for real, including the commit phase**: the reviewed summary reached the
+  roll-up sheet (the author, 2026-08-14). The longest chain in the system is now
+  exercised end to end, irreversible step included.
+- ~~**Delete**~~ — run live 2026-08-14. The last CRUD path, and the one with
+  tombstones behind it.
+- **Conflict resolution** — the one thing left, and **deliberately deferred**
+  (the author, 2026-08-14): staging it means arranging two writers against the same
+  field between two syncs, which is more setup than it is worth right now. It is no
+  longer *hard*, at least — point two stores at one D1 database, edit the same
+  field in both, and sync; `test_d1_integration.py` already covers two stores
+  sharing one project identity, so the harness is a few lines from existing. Worth
+  doing before anyone else relies on the merge, since it is the only rule in the
+  system whose failure mode is silent.
 
 - [x] **4. Provisioning + first-run setup** — `probe()` → `provision()` → adopt.
   Done. `views/setup_modal.py` holds `SetupModal` (backend, create-or-connect,
