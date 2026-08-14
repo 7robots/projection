@@ -42,6 +42,51 @@ from pathlib import Path
 # The sibling modules ship next to this script, so it works from any directory.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+
+def _reexec_in_project_venv() -> None:
+    """Re-run under an interpreter that actually has `projection` installed.
+
+    A hook is a subprocess with a **scratch working directory** and a scrubbed
+    environment, so `#!/usr/bin/env python3` above resolves to whichever python is
+    first on PATH — typically a system or homebrew one, with neither `projection`
+    nor its dependencies. Run from the repository root it works by accident, since
+    the package is a subdirectory there; run the way the hook actually runs it
+    fails on the first import. That is precisely why this went unnoticed until the
+    hook was fired for the first time.
+
+    So: if the import cannot be satisfied, hand off to the project's own
+    interpreter. `os.execv` keeps the file descriptors, which matters — the
+    payload is already waiting on stdin.
+    """
+    try:
+        import projection.smartsheet_api  # noqa: F401
+        return
+    except ImportError:
+        pass
+
+    venv_python = Path(__file__).resolve().parents[2] / ".venv" / "bin" / "python"
+    here = Path(sys.executable).resolve()
+    if not venv_python.exists():
+        raise SystemExit(
+            f"{Path(__file__).name}: cannot import `projection`, and no virtual "
+            f"environment at {venv_python}. Run `uv sync` in the project, or "
+            "install projection into the interpreter running this script."
+        )
+    if here == venv_python.resolve():
+        # Already the right interpreter, so the import failure is real.
+        raise SystemExit(
+            f"{Path(__file__).name}: `projection` is not importable from "
+            f"{here} even though it is this project's environment. Run `uv sync`."
+        )
+
+    os.execv(
+        str(venv_python),
+        [str(venv_python), str(Path(__file__).resolve()), *sys.argv[1:]],
+    )
+
+
+_reexec_in_project_venv()
+
 import headless  # noqa: E402
 from summary_store import SummaryStore  # noqa: E402
 
